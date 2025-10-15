@@ -70,7 +70,7 @@ class TestProjectSaleUtilities(BaseCommon):
         invoice = self.invoice_model.create(
             {
                 "partner_id": self.sale.partner_id.id,
-                "move_type": "in_invoice",
+                "move_type": "out_invoice",
             }
         )
         for line in self.sale.order_line:
@@ -95,7 +95,7 @@ class TestProjectSaleUtilities(BaseCommon):
         sale_line_dict = self.project.button_open_sale_order_line()
         self.assertEqual(sale_line_dict.get("domain"), sale_domain)
 
-        action = self.env.ref("account.action_move_in_invoice_type")
+        action = self.env.ref("account.action_move_out_invoice_type")
         invoice_domain = expression.AND(
             [safe_eval(action.domain or "[]"), self.project._domain_sale_invoice()]
         )  # only one test invoice (line)

@@ -19,7 +19,7 @@ class ProjectProject(models.Model):
         compute="_compute_sale_invoice_info", string="Sale Invoice Total"
     )
 
-    def _domain_sale_order(self):
+    def _domain_sale_order(self, get_domain=True):
         query = self.env["sale.order.line"]._search(
             [
                 ("order_id.state", "!=", "cancel"),
@@ -36,11 +36,13 @@ class ProjectProject(models.Model):
             "sale_order_line.order_id as order_id",
         )
         self._cr.execute(query_string, query_param)
-        sale_lines_ids = [
-            int(record.get("order_id")) for record in self._cr.dictfetchall()
-        ]
+        sale_lines_ids = list(
+            set([int(record.get("order_id")) for record in self._cr.dictfetchall()])
+        )
         domain = [("id", "in", sale_lines_ids)]
-        return domain
+        if get_domain:
+            return domain
+        return sale_lines_ids
 
     def _domain_sale_order_line(self):
         query = self.env["sale.order.line"]._search(
@@ -70,9 +72,10 @@ class ProjectProject(models.Model):
             ]
         )
         # check if analytic_distribution contains id of analytic account
+        ids = [str(p.account_id.id) for p in self if p.account_id]
         query.add_where(
-            "account_move_line.analytic_distribution ?| array[%s]",
-            [str(project.account_id.id) for project in self],
+            "account_move_line.analytic_distribution ? ANY (%s::text[])",
+            (ids,),
         )
         query.order = None
         query_string, query_param = query.select(
@@ -89,13 +92,14 @@ class ProjectProject(models.Model):
         query = self.env["account.move.line"]._search(
             [
                 ("move_id.state", "!=", "cancel"),
-                ("move_id.move_type", "=", "in_invoice"),
+                ("move_id.move_type", "=", "out_invoice"),
             ]
         )
         # check if analytic_distribution contains id of analytic account
+        ids = [str(p.account_id.id) for p in self if p.account_id]
         query.add_where(
-            "account_move_line.analytic_distribution ?| array[%s]",
-            [str(project.account_id.id) for project in self],
+            "account_move_line.analytic_distribution ? ANY (%s::text[])",
+            (ids,),
         )
         query.order = None
         query_string, query_param = query.select(
@@ -117,8 +121,10 @@ class ProjectProject(models.Model):
             )
             sale_line_total = 0
             for group in groups:
-                sale_line_total += group["price_subtotal"]
-            project.sale_count = len(groups)
+                sale_line_total += (
+                    group["price_subtotal"] * group["price_subtotal_count"]
+                )
+            project.sale_count = len(project._domain_sale_order(get_domain=False))
             project.sale_line_total = sale_line_total
 
     def _compute_sale_invoice_info(self):
@@ -130,8 +136,12 @@ class ProjectProject(models.Model):
             )
             sale_invoice_line_total = 0
             for group in groups:
-                sale_invoice_line_total += group["price_subtotal"]
-            project.sale_invoice_count = len(groups)
+                sale_invoice_line_total += (
+                    group["price_subtotal"] * group["move_id_count"]
+                )
+            project.sale_invoice_count = sum(
+                [a.get("move_id_count") for a in groups if a.get("move_id_count")]
+            )
             project.sale_invoice_line_total = sale_invoice_line_total
 
     def button_open_sale_order(self):
@@ -157,7 +167,7 @@ class ProjectProject(models.Model):
     def button_open_sale_invoice(self):
         self.ensure_one()
         action = self.env["ir.actions.act_window"]._for_xml_id(
-            "account.action_move_in_invoice_type"
+            "account.action_move_out_invoice_type"
         )
         domain = expression.AND(
             [
